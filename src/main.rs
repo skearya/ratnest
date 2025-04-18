@@ -49,8 +49,9 @@ impl Expr {
         let expr_weights = [1.0, 1.0, 1.0, op_expr_weight];
         let expr_dist = WeightedIndex::new(expr_weights).unwrap();
 
+        // Disabled inverse trig functions cause of domain restrictions
         let op_weights = [
-            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
         ];
         let op_dist = WeightedIndex::new(op_weights).unwrap();
 
@@ -220,7 +221,7 @@ fn main() {
     let mut img = RgbImage::new(WIDTH, HEIGHT);
 
     // let expr = (
-    //     Expr::Operation(P(Operation::Mul(Expr::X, Expr::Literal(255.0)))),
+    //     Expr::Operation(P(Operation::Mul(Expr::X, Expr::Literal(255.0 * 10.0)))),
     //     Expr::Operation(P(Operation::Mul(Expr::Y, Expr::Literal(255.0)))),
     //     Expr::Literal(0.0),
     // );
@@ -234,6 +235,8 @@ fn main() {
         Expr::random(&mut rng, 0),
         Expr::random(&mut rng, 0),
     );
+
+    dbg!(&expr);
 
     let expr = (fix(expr.0), fix(expr.1), fix(expr.2));
 
