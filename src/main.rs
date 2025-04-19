@@ -1,5 +1,5 @@
 use std::f32::consts::PI;
-use std::fmt::Display;
+use std::fmt::{Display, Write};
 use std::ops::{Add, Div, Mul, Sub};
 
 use glam::Vec2;
@@ -11,7 +11,7 @@ use rand::{
 use rand_chacha::ChaCha8Rng;
 use rand_seeder::Seeder;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Expr {
     X,
     Y,
@@ -19,7 +19,7 @@ enum Expr {
     Operation(Box<Operation>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Operation {
     Add(Expr, Expr),
     Sub(Expr, Expr),
@@ -51,10 +51,11 @@ impl Expr {
 
         // Disabled inverse trig functions cause of domain restrictions
         let op_weights = [
-            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0,
         ];
         let op_dist = WeightedIndex::new(op_weights).unwrap();
 
+        // TODO: Increase literal range and bias towards lower numbers
         match expr_dist.sample(rng) {
             0 => Expr::X,
             1 => Expr::Y,
@@ -81,6 +82,26 @@ impl Expr {
             })),
             _ => unreachable!(),
         }
+    }
+
+    fn to_glsl((r, g, b): &(Expr, Expr, Expr)) -> Result<String, std::fmt::Error> {
+        let mut o = String::new();
+
+        write!(&mut o, "precision highp float;")?;
+        write!(
+            &mut o,
+            "void mainImage(out vec4 fragColor, in vec2 fragCoord) {{"
+        )?;
+
+        write!(&mut o, "vec2 uv = fragCoord / iResolution.xy;")?;
+        write!(&mut o, "float x = uv.x;")?;
+        write!(&mut o, "float y = uv.y;")?;
+
+        write!(&mut o, "fragColor = vec4({r}, {g}, {b}, 1.0);")?;
+
+        write!(&mut o, "}}")?;
+
+        Ok(o)
     }
 }
 
@@ -116,25 +137,31 @@ impl Display for Expr {
         match self {
             Expr::X => write!(f, "x"),
             Expr::Y => write!(f, "y"),
-            Expr::Literal(x) => write!(f, "{x}"),
+            Expr::Literal(x) => {
+                if x.fract() == 0.0 {
+                    write!(f, "{x}.0")
+                } else {
+                    write!(f, "{x}")
+                }
+            }
             Expr::Operation(op) => match op.as_ref() {
-                Operation::Add(left, right) => write!(f, "({} + {})", left, right),
-                Operation::Sub(left, right) => write!(f, "({} - {})", left, right),
-                Operation::Mul(left, right) => write!(f, "({} * {})", left, right),
-                Operation::Div(left, right) => write!(f, "({} / {})", left, right),
-                Operation::Mod(left, right) => write!(f, "({} % {})", left, right),
-                Operation::Pow(left, right) => write!(f, "({} ^ {})", left, right),
-                Operation::Log(left, right) => write!(f, "log(base {})({})", left, right),
-                Operation::Sin(left) => write!(f, "sin({})", left),
-                Operation::Cos(left) => write!(f, "cos({})", left),
-                Operation::Tan(left) => write!(f, "tan({})", left),
-                Operation::ASin(left) => write!(f, "asin({})", left),
-                Operation::ACos(left) => write!(f, "acos({})", left),
-                Operation::ATan(left) => write!(f, "atan({})", left),
-                Operation::Radians(left) => write!(f, "radians({})", left),
-                Operation::Degrees(left) => write!(f, "degrees({})", left),
-                Operation::Sqrt(left) => write!(f, "sqrt({})", left),
-                Operation::Fract(left) => write!(f, "fract({})", left),
+                Operation::Add(left, right) => write!(f, "({left} + {right})"),
+                Operation::Sub(left, right) => write!(f, "({left} - {right})"),
+                Operation::Mul(left, right) => write!(f, "({left} * {right})"),
+                Operation::Div(left, right) => write!(f, "({left} / {right})"),
+                Operation::Mod(left, right) => write!(f, "mod({left}, {right})"),
+                Operation::Pow(left, right) => write!(f, "pow({left}, {right})"),
+                Operation::Log(left, right) => write!(f, "(log({right}) / log({left}))"),
+                Operation::Sin(left) => write!(f, "sin({left})",),
+                Operation::Cos(left) => write!(f, "cos({left})",),
+                Operation::Tan(left) => write!(f, "tan({left})",),
+                Operation::ASin(left) => write!(f, "asin({left})"),
+                Operation::ACos(left) => write!(f, "acos({left})"),
+                Operation::ATan(left) => write!(f, "atan({left})"),
+                Operation::Radians(left) => write!(f, "radians({left})"),
+                Operation::Degrees(left) => write!(f, "degrees({left})"),
+                Operation::Sqrt(left) => write!(f, "sqrt({left})"),
+                Operation::Fract(left) => write!(f, "fract({left})"),
             },
         }
     }
@@ -190,7 +217,8 @@ fn range(expr: &Expr) -> Vec2 {
         for y in 0..=100 {
             let y = y as f32 / 100.0;
 
-            let res = eval(expr, x, y);
+            let res = eval(expr, x, y).clamp(-10000.0, 10000.0);
+            let res = if res.is_normal() { res } else { 0.0 };
 
             min = res.min(min);
             max = res.max(max);
@@ -201,33 +229,56 @@ fn range(expr: &Expr) -> Vec2 {
 }
 
 // TODO: Something in here keeps being infinity
-fn fix(expr: Expr) -> Expr {
+fn fix(mut expr: Expr, max: f32) -> Expr {
     let range = range(&expr);
 
     let dist = -range.x;
     let diff = range.y - range.x;
-    let factor = 255.0 / diff;
+    let factor = max / diff;
+    let factor = if factor.is_normal() { factor } else { 1.0 };
 
-    Expr::Operation(Box::new(Operation::Mul(
-        Expr::Operation(Box::new(Operation::Add(expr, Expr::Literal(dist)))),
-        Expr::Literal(factor),
-    )))
+    if dist != 0.0 {
+        expr = Expr::Operation(Box::new(Operation::Add(expr, Expr::Literal(dist))));
+    }
+
+    if factor != 1.0 {
+        expr = Expr::Operation(Box::new(Operation::Mul(expr, Expr::Literal(factor))));
+    }
+
+    expr
 }
 
-const WIDTH: u32 = 512;
-const HEIGHT: u32 = 512;
+const WIDTH: u32 = 1024;
+const HEIGHT: u32 = 576;
 
 fn main() {
     let mut img = RgbImage::new(WIDTH, HEIGHT);
 
     // let expr = (
-    //     Expr::Operation(P(Operation::Mul(Expr::X, Expr::Literal(255.0 * 10.0)))),
+    //     Expr::Operation(P(Operation::Mul(Expr::X, Expr::Literal(255.0)))),
     //     Expr::Operation(P(Operation::Mul(Expr::Y, Expr::Literal(255.0)))),
     //     Expr::Literal(0.0),
     // );
 
-    // let mut rng = Seeder::from("ee").into_rng::<ChaCha8Rng>();
+    // let expr = (
+    //     Op(Operation::Mul(
+    //         Op(Operation::Tan(Op(Operation::Div(
+    //             Expr::X,
+    //             Op(Operation::Mod(Expr::X, Expr::Literal(237.7118))),
+    //         )))),
+    //         Expr::Literal(163.73361),
+    //     )),
+    //     Op(Operation::Mul(
+    //         Op(Operation::Sqrt(Expr::Y)),
+    //         Expr::Literal(255.0),
+    //     )),
+    //     Op(Operation::Mul(
+    //         Op(Operation::Add(Op(Operation::Radians(Expr::Y)), Expr::X)),
+    //         Expr::Literal(250.62575),
+    //     )),
+    // );
 
+    // let mut rng = Seeder::from("ewafoi").into_rng::<ChaCha8Rng>();
     let mut rng = rand::rng();
 
     let expr: (Expr, Expr, Expr) = (
@@ -236,14 +287,23 @@ fn main() {
         Expr::random(&mut rng, 0),
     );
 
-    dbg!(&expr);
+    let glsl = Expr::to_glsl(&(
+        fix(expr.0.clone(), 1.0),
+        fix(expr.1.clone(), 1.0),
+        fix(expr.2.clone(), 1.0),
+    ))
+    .unwrap();
 
-    let expr = (fix(expr.0), fix(expr.1), fix(expr.2));
+    let expr = (fix(expr.0, 255.0), fix(expr.1, 255.0), fix(expr.2, 255.0));
 
     dbg!(&expr);
     println!("red: {}", expr.0);
     println!("green: {}", expr.1);
     println!("blue: {}", expr.2);
+    dbg!(glsl);
+
+    use std::time::Instant;
+    let now = Instant::now();
 
     for (x, y, Rgb(color)) in img.enumerate_pixels_mut() {
         // 0.0 - 1.0 value coords
@@ -265,7 +325,15 @@ fn main() {
         ];
     }
 
+    let elapsed = now.elapsed();
+    println!("Elapsed: {:.2?}", elapsed);
+
     img.save("out.png").unwrap();
+}
+
+#[allow(non_snake_case)]
+fn Op(op: Operation) -> Expr {
+    Expr::Operation(P(op))
 }
 
 #[allow(non_snake_case)]
