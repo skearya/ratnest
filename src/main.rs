@@ -1,14 +1,16 @@
 use std::f32::consts::PI;
 use std::fmt::{Display, Write};
 use std::ops::{Add, Div, Mul, Sub};
+use std::rc::Rc;
+use std::time::Instant;
 
-use glam::Vec2;
 use image::{Rgb, RgbImage};
+use rand::SeedableRng;
 use rand::{
     Rng,
     distr::{Distribution, Uniform, weighted::WeightedIndex},
 };
-use rand_chacha::ChaCha8Rng;
+use rand_chacha::{ChaCha8Rng, ChaCha20Rng};
 use rand_seeder::Seeder;
 
 #[derive(Debug, Clone)]
@@ -38,6 +40,7 @@ enum Operation {
     Degrees(Expr),
     Sqrt(Expr),
     Fract(Expr),
+    Reciprocal(Expr),
 }
 
 impl Expr {
@@ -49,9 +52,10 @@ impl Expr {
         let expr_weights = [1.0, 1.0, 1.0, op_expr_weight];
         let expr_dist = WeightedIndex::new(expr_weights).unwrap();
 
-        // Disabled inverse trig functions cause of domain restrictions
+        // TODO: Disabled inverse trig functions cause of domain restrictions
         let op_weights = [
             1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            1.0,
         ];
         let op_dist = WeightedIndex::new(op_weights).unwrap();
 
@@ -78,6 +82,7 @@ impl Expr {
                 14 => Operation::Degrees(Expr::random(rng, depth + 1)),
                 15 => Operation::Sqrt(Expr::random(rng, depth + 1)),
                 16 => Operation::Fract(Expr::random(rng, depth + 1)),
+                17 => Operation::Reciprocal(Expr::random(rng, depth + 1)),
                 _ => unreachable!(),
             })),
             _ => unreachable!(),
@@ -97,7 +102,11 @@ impl Expr {
         write!(&mut o, "float x = uv.x;")?;
         write!(&mut o, "float y = uv.y;")?;
 
-        write!(&mut o, "fragColor = vec4({r}, {g}, {b}, 1.0);")?;
+        write!(&mut o, "float r = {r};")?;
+        write!(&mut o, "float g = {g};")?;
+        write!(&mut o, "float b = {b};")?;
+
+        write!(&mut o, "fragColor = vec4(r, g, b, 1.0);")?;
 
         write!(&mut o, "}}")?;
 
@@ -127,7 +136,8 @@ fn eval(expr: &Expr, x: f32, y: f32) -> f32 {
             Operation::Radians(left) => PI * eval(left, x, y) / 180.0,
             Operation::Degrees(left) => 180.0 * eval(left, x, y) / PI,
             Operation::Sqrt(left) => eval(left, x, y).sqrt(),
-            Operation::Fract(left) => eval(left, x, y) % 1.0,
+            Operation::Fract(left) => eval(left, x, y) - eval(left, x, y).floor(),
+            Operation::Reciprocal(left) => 1.0 / eval(left, x, y),
         },
     }
 }
@@ -137,13 +147,8 @@ impl Display for Expr {
         match self {
             Expr::X => write!(f, "x"),
             Expr::Y => write!(f, "y"),
-            Expr::Literal(x) => {
-                if x.fract() == 0.0 {
-                    write!(f, "{x}.0")
-                } else {
-                    write!(f, "{x}")
-                }
-            }
+            Expr::Literal(x) if x.fract() == 0.0 => write!(f, "{x}.0"),
+            Expr::Literal(x) => write!(f, "{x}"),
             Expr::Operation(op) => match op.as_ref() {
                 Operation::Add(left, right) => write!(f, "({left} + {right})"),
                 Operation::Sub(left, right) => write!(f, "({left} - {right})"),
@@ -162,60 +167,21 @@ impl Display for Expr {
                 Operation::Degrees(left) => write!(f, "degrees({left})"),
                 Operation::Sqrt(left) => write!(f, "sqrt({left})"),
                 Operation::Fract(left) => write!(f, "fract({left})"),
+                Operation::Reciprocal(left) => write!(f, "(1.0 / {left})"),
             },
         }
     }
 }
 
-// trait Vec2Utils {
-//     fn sorted(x: f32, y: f32) -> Vec2;
-//     fn preform(left: Self, right: Self, f: impl Fn(f32, f32) -> f32) -> Vec2;
-// }
-
-// impl Vec2Utils for Vec2 {
-//     fn sorted(x: f32, y: f32) -> Vec2 {
-//         Vec2::new(x.min(y), x.max(y))
-//     }
-
-//     // Preform an operation with both sides of 2 Vec2's and ensure the output is sorted
-//     fn preform(left: Vec2, right: Vec2, f: impl Fn(f32, f32) -> f32) -> Vec2 {
-//         Vec2::sorted(f(left.x, right.x), f(left.y, right.y))
-//     }
-// }
-
-// TODO: Revisit tracking the specific range of an expression
-// fn range(expr: &Expr) -> Vec2 {
-//     match expr {
-//         Expr::X => Vec2::new(0.0, 1.0),
-//         Expr::Y => Vec2::new(0.0, 1.0),
-//         Expr::Literal(x) => Vec2::new(*x, *x),
-//         Expr::Operation(operation) => match operation.as_ref() {
-//             Operation::Add(left, right) => Vec2::preform(range(left), range(right), f32::add),
-//             Operation::Sub(left, right) => Vec2::preform(range(left), range(right), f32::sub),
-//             Operation::Mul(left, right) => Vec2::preform(range(left), range(right), f32::mul),
-//             Operation::Div(left, right) => Vec2::preform(range(left), range(right), f32::div),
-//             Operation::Mod(_left, right) => Vec2::sorted(0.0, range(right).y),
-//             Operation::Pow(left, right) => Vec2::preform(range(left), range(right), f32::powf),
-//             Operation::Log(left, right) => Vec2::preform(range(right), range(left), f32::log),
-//             Operation::Sin(left) => range(left).map(f32::sin),
-//             Operation::Cos(left) => range(left).map(f32::cos),
-//             Operation::Tan(left) => range(left).map(f32::tan),
-//             Operation::ASin(left) => range(left).map(f32::atan),
-//             Operation::ACos(left) => range(left).map(f32::acos),
-//             Operation::ATan(left) => range(left).map(f32::atan),
-//         },
-//     }
-// }
-
-fn range(expr: &Expr) -> Vec2 {
+fn range(expr: &Expr, (x_min, x_max): (f32, f32), (y_min, y_max): (f32, f32)) -> (f32, f32) {
     let mut min = f32::MAX;
     let mut max = f32::MIN;
 
     for x in 0..=100 {
-        let x = x as f32 / 100.0;
+        let x = lerp(x_min, x_max, x as f32 / 100.0);
 
         for y in 0..=100 {
-            let y = y as f32 / 100.0;
+            let y = lerp(y_min, y_max, y as f32 / 100.0);
 
             let res = eval(expr, x, y).clamp(-10000.0, 10000.0);
             let res = if res.is_normal() { res } else { 0.0 };
@@ -225,15 +191,13 @@ fn range(expr: &Expr) -> Vec2 {
         }
     }
 
-    Vec2::new(min, max)
+    (min, max)
 }
 
-// TODO: Something in here keeps being infinity
-fn fix(mut expr: Expr, max: f32) -> Expr {
-    let range = range(&expr);
-
-    let dist = -range.x;
-    let diff = range.y - range.x;
+// TODO: Fix with more ways than linear interpolation
+fn fix(mut expr: Expr, (expr_min, expr_max): (f32, f32), min: f32, max: f32) -> Expr {
+    let dist = min - expr_min;
+    let diff = expr_max - expr_min;
     let factor = max / diff;
     let factor = if factor.is_normal() { factor } else { 1.0 };
 
@@ -279,7 +243,14 @@ fn main() {
     // );
 
     // let mut rng = Seeder::from("ewafoi").into_rng::<ChaCha8Rng>();
-    let mut rng = rand::rng();
+
+    let mut rng = ChaCha20Rng::from_os_rng();
+    let seed = rng.get_seed();
+
+    // let mut rng = ChaCha20Rng::from_seed([
+    //     110, 220, 229, 101, 203, 98, 226, 177, 28, 21, 13, 6, 57, 233, 29, 250, 128, 123, 133, 138,
+    //     169, 74, 18, 186, 199, 162, 204, 81, 101, 6, 182, 80,
+    // ]);
 
     let expr: (Expr, Expr, Expr) = (
         Expr::random(&mut rng, 0),
@@ -287,28 +258,37 @@ fn main() {
         Expr::random(&mut rng, 0),
     );
 
+    // let scale = Uniform::new(0.1, 5.0).unwrap().sample(&mut rng);
+    // let start_x = Uniform::new(-1024.0, 1024.0).unwrap().sample(&mut rng);
+    // let start_y = Uniform::new(-1024.0, 1024.0).unwrap().sample(&mut rng);
+
+    #[rustfmt::skip]
     let glsl = Expr::to_glsl(&(
-        fix(expr.0.clone(), 1.0),
-        fix(expr.1.clone(), 1.0),
-        fix(expr.2.clone(), 1.0),
+        fix(expr.0.clone(), range(&expr.0, (0.0, 1.0), (0.0, 1.0)), 0.0, 1.0),
+        fix(expr.1.clone(), range(&expr.1, (0.0, 1.0), (0.0, 1.0)), 0.0, 1.0),
+        fix(expr.2.clone(), range(&expr.2, (0.0, 1.0), (0.0, 1.0)), 0.0, 1.0),
     ))
     .unwrap();
 
-    let expr = (fix(expr.0, 255.0), fix(expr.1, 255.0), fix(expr.2, 255.0));
+    #[rustfmt::skip]
+    let expr = (
+        fix(expr.0.clone(), range(&expr.0, (0.0, 1.0), (0.0, 1.0)), 0.0, 255.0),
+        fix(expr.1.clone(), range(&expr.1, (0.0, 1.0), (0.0, 1.0)), 0.0, 255.0),
+        fix(expr.2.clone(), range(&expr.2, (0.0, 1.0), (0.0, 1.0)), 0.0, 255.0),
+    );
 
     dbg!(&expr);
     println!("red: {}", expr.0);
     println!("green: {}", expr.1);
     println!("blue: {}", expr.2);
-    dbg!(glsl);
+    println!("{}", glsl);
 
-    use std::time::Instant;
     let now = Instant::now();
 
     for (x, y, Rgb(color)) in img.enumerate_pixels_mut() {
         // 0.0 - 1.0 value coords
-        let u = x as f32 / WIDTH as f32;
-        let v = 1.0 - y as f32 / HEIGHT as f32;
+        let x = x as f32 / WIDTH as f32;
+        let y = 1.0 - y as f32 / HEIGHT as f32;
 
         // -1.0 - 1.0 value coords
         // let u = (x as f32 / WIDTH as f32) * 2.0 - 1.0;
@@ -319,16 +299,25 @@ fn main() {
         // let v = 1.0 - y as f32 / 512.0;
 
         *color = [
-            eval(&expr.0, u, v) as u8,
-            eval(&expr.1, u, v) as u8,
-            eval(&expr.2, u, v) as u8,
+            eval(&expr.0, x, y) as u8,
+            eval(&expr.1, x, y) as u8,
+            eval(&expr.2, x, y) as u8,
         ];
     }
 
+    // for (x, y, Rgb(color)) in img.enumerate_pixels_mut() {
+    //     *color = [x as u8, y as u8, x as u8];
+    // }
+
     let elapsed = now.elapsed();
-    println!("Elapsed: {:.2?}", elapsed);
+    println!("elapsed: {elapsed:.2?}");
+    println!("seed: {seed:?}");
 
     img.save("out.png").unwrap();
+}
+
+fn lerp(start: f32, end: f32, amount: f32) -> f32 {
+    start + (end - start) * amount
 }
 
 #[allow(non_snake_case)]
