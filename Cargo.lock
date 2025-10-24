@@ -455,17 +455,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "msg-shader"
-version = "0.1.0"
-dependencies = [
- "glam",
- "image",
- "rand 0.9.0",
- "rand_chacha 0.9.0",
- "rand_seeder",
-]
-
-[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -702,6 +691,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "502927fdfc3c9645d53e0c95bb2d53783b5a15bfeaeeb96f7703c21fbb76841e"
 dependencies = [
  "rand_core 0.9.3",
+]
+
+[[package]]
+name = "randomshader"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "image",
+ "rand 0.9.0",
+ "rand_chacha 0.9.0",
+ "rand_seeder",
 ]
 
 [[package]]

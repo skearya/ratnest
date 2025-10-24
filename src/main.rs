@@ -258,10 +258,6 @@ fn main() {
         Expr::random(&mut rng, 0),
     );
 
-    // let scale = Uniform::new(0.1, 5.0).unwrap().sample(&mut rng);
-    // let start_x = Uniform::new(-1024.0, 1024.0).unwrap().sample(&mut rng);
-    // let start_y = Uniform::new(-1024.0, 1024.0).unwrap().sample(&mut rng);
-
     #[rustfmt::skip]
     let glsl = Expr::to_glsl(&(
         fix(expr.0.clone(), range(&expr.0, (0.0, 1.0), (0.0, 1.0)), 0.0, 1.0),
@@ -304,10 +300,6 @@ fn main() {
             eval(&expr.2, x, y) as u8,
         ];
     }
-
-    // for (x, y, Rgb(color)) in img.enumerate_pixels_mut() {
-    //     *color = [x as u8, y as u8, x as u8];
-    // }
 
     let elapsed = now.elapsed();
     println!("elapsed: {elapsed:.2?}");
